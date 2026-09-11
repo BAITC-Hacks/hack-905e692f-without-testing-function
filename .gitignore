@@ -5,11 +5,21 @@ __pycache__/
 .ruff_cache/
 node_modules/
 .next/
+*.tsbuildinfo
 data/raw/*
 !data/raw/.gitkeep
 data/interim/*
 !data/interim/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+# Sensitive tabular extracts belong in the ignored data directories above.
+# Put deliberately shareable synthetic fixtures in tests/fixtures/ or data/demo/.
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.parquet
+*.feather
+*.arrow
 ml/artifacts/*
 !ml/artifacts/.gitkeep
