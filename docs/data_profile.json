@@ -1,0 +1,19 @@
+[
+  {
+    "file": "data/raw/synthetic_hospital_period.csv",
+    "bytes": 10589,
+    "format": ".csv",
+    "status": "metadata_only",
+    "rows": 252,
+    "columns": [
+      "synthetic",
+      "date",
+      "organization_id",
+      "referrals",
+      "waiting",
+      "refusals",
+      "treated_cases"
+    ],
+    "sensitive_fields": []
+  }
+]

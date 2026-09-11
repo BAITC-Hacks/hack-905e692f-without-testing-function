@@ -1,0 +1,5 @@
+# Prototype analytical thresholds, not clinical norms or operational regulations.
+waiting_growth_medium_pct: 10
+waiting_growth_high_pct: 25
+waiting_growth_critical_pct: 50
+anomaly_z_score: 2.5
