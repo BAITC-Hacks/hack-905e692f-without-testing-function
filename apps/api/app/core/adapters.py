@@ -1,6 +1,7 @@
 """Schema-adaptive interfaces: mappings are recorded; source columns are never guessed."""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import ClassVar
 
 
 @dataclass
@@ -12,7 +13,7 @@ class MappingReport:
 
 
 class BaseDatasetAdapter(ABC):
-    canonical_fields: set[str] = set()
+    canonical_fields: ClassVar[set[str]] = set()
 
     @abstractmethod
     def detect(self, columns: list[str]) -> bool: ...
@@ -22,7 +23,7 @@ class BaseDatasetAdapter(ABC):
 
 
 class HospitalReferralAdapter(BaseDatasetAdapter):
-    canonical_fields = {"date", "region_id", "organization_id", "referrals"}
+    canonical_fields: ClassVar[set[str]] = {"date", "region_id", "organization_id", "referrals"}
     def detect(self, columns: list[str]) -> bool: return bool(set(columns) & self.canonical_fields)
 
 

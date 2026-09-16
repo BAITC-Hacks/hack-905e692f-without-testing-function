@@ -15,5 +15,119 @@
       "treated_cases"
     ],
     "sensitive_fields": []
+  },
+  {
+    "file": "data/raw/Количество пролеченных случаев в разрезе МО.csv",
+    "bytes": 591716,
+    "format": ".csv",
+    "status": "metadata_only",
+    "rows": 2196,
+    "columns": [
+      "medicine_organization",
+      "discharged_total",
+      "discharged_children",
+      "treated_budget",
+      "treated_paid",
+      "discharged_within_day",
+      "deaths_total",
+      "bed_days",
+      "amount_to_pay",
+      "sdu_load_date"
+    ],
+    "sensitive_fields": []
+  },
+  {
+    "file": "data/raw/Направления на плановую госпитализацию в стационары_part_003_of_003.csv",
+    "bytes": 230961338,
+    "format": ".csv",
+    "status": "metadata_only",
+    "rows": 255710,
+    "columns": [
+      "hospitalization_code",
+      "referring_mo",
+      "hospital_mo",
+      "icd10_ref_diag_code",
+      "diagnosis_name",
+      "bed_profile",
+      "registration_dt",
+      "planned_dt",
+      "polyclinic_dt",
+      "hospitalization_dt",
+      "refusal_dt",
+      "territorial_type",
+      "referral_purpose",
+      "finance_source",
+      "sdu_load_date"
+    ],
+    "sensitive_fields": [
+      "diagnosis_name"
+    ]
+  },
+  {
+    "file": "data/raw/Ожидающие плановую госпитализацию в стационары.csv",
+    "bytes": 164407376,
+    "format": ".csv",
+    "status": "metadata_only",
+    "rows": 765182,
+    "columns": [
+      "region_origin_code",
+      "mo_destination_code",
+      "profile_code",
+      "patient_seq_no",
+      "icd10_ref_diag_code",
+      "diagnosis_name",
+      "operation_code",
+      "operation_name",
+      "registration_dt",
+      "planned_dt",
+      "sdu_load_date"
+    ],
+    "sensitive_fields": [
+      "patient_seq_no",
+      "diagnosis_name",
+      "operation_name"
+    ]
+  },
+  {
+    "file": "data/raw/Отказы в плановой госпитализации (приёмный покой)_part_001_of_006.csv",
+    "bytes": 220449895,
+    "format": ".csv",
+    "status": "metadata_only",
+    "rows": 251456,
+    "columns": [
+      "region_in",
+      "org_in",
+      "resident",
+      "insured",
+      "benefit_cat",
+      "refuse_dt",
+      "attach_region",
+      "attach_org",
+      "icd10",
+      "icd_name",
+      "amount",
+      "finance_src",
+      "sdu_load_date"
+    ],
+    "sensitive_fields": [
+      "icd_name"
+    ]
+  },
+  {
+    "file": "data/raw/Факты проведённых вакцинаций с возможностью представления в разрезе возрастов_part_001_of_105.csv",
+    "bytes": 147973133,
+    "format": ".csv",
+    "status": "metadata_only",
+    "rows": 994681,
+    "columns": [
+      "id",
+      "vaccination_date",
+      "age",
+      "vaccination_plan",
+      "medicine_organization_code",
+      "region",
+      "sdu_load_date"
+    ],
+    "sensitive_fields": []
   }
 ]

@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
 """Write a replaceable, clearly marked synthetic aggregate input for local demos."""
 import csv
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "apps/api"))
-from app.core.demo_data import ORGANIZATIONS, observations  # noqa: E402
+from app.core.demo_data import ORGANIZATIONS, observations
 
 out = Path(__file__).parents[1] / "data/raw/synthetic_hospital_period.csv"
 with out.open("w", newline="", encoding="utf-8") as handle:

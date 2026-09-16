@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 
 from app.core.schemas import OrganizationSummary, PeriodObservation
 
@@ -16,7 +16,7 @@ REGIONS = {"region-almaty": "Synthetic Region Almaty", "region-astana": "Synthet
 
 def observations(org_id: str, days: int = 84) -> list[PeriodObservation]:
     offset = {org[0]: index for index, org in enumerate(ORGANIZATIONS)}[org_id]
-    start = date.today() - timedelta(days=days - 1)
+    start = datetime.now().astimezone().date() - timedelta(days=days - 1)
     rows: list[PeriodObservation] = []
     for i in range(days):
         referrals = round(43 + offset * 4 + 7 * math.sin(i / 7) + (i % 5))

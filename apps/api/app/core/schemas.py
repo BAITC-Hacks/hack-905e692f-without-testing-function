@@ -9,6 +9,7 @@ class OrganizationSummary(BaseModel):
     name: str
     region_id: str
     latest_waiting: int
+    latest_daily_registrations: int | None = None
     risk: Literal["low", "medium", "high", "critical"]
 
 
@@ -22,7 +23,7 @@ class PeriodObservation(BaseModel):
 
 class Forecast(BaseModel):
     organization_id: str
-    target: Literal["waiting"] = "waiting"
+    target: str
     generated_at: date
     horizon_days: int
     expected: float
@@ -30,7 +31,10 @@ class Forecast(BaseModel):
     upper: float
     model: str
     contributors: list[str]
-    synthetic: bool
+    synthetic: bool = False
+    points: list[dict[str, float | str]] = []
+    explanation: list[dict[str, float | str]] = []
+    uncertainty_method: str | None = None
 
 
 class Anomaly(BaseModel):

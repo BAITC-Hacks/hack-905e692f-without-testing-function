@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import statistics
-from datetime import date
+from datetime import datetime
 
 from app.core.schemas import Anomaly, Forecast, PeriodObservation
 
@@ -14,7 +14,7 @@ def persistence_forecast(org_id: str, history: list[PeriodObservation], horizon_
     spread = max(1.0, statistics.pstdev(residuals) * (horizon_days ** 0.5))
     trend = values[-1] - values[-8] if len(values) >= 8 else 0
     contributors = [f"waiting_7d_trend: {trend:+.0f}", f"last_observed_waiting: {values[-1]}"]
-    return Forecast(organization_id=org_id, generated_at=date.today(), horizon_days=horizon_days,
+    return Forecast(organization_id=org_id, target="waiting", generated_at=datetime.now().astimezone().date(), horizon_days=horizon_days,
                     expected=round(expected, 1), lower=round(max(0, expected - 1.96 * spread), 1),
                     upper=round(expected + 1.96 * spread, 1), model="naive_persistence_baseline",
                     contributors=contributors, synthetic=True)
