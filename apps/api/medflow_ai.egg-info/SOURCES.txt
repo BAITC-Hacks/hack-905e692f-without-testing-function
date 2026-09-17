@@ -4,8 +4,10 @@ apps/api/app/__init__.py
 apps/api/app/main.py
 apps/api/app/core/adapters.py
 apps/api/app/core/analytics.py
+apps/api/app/core/auth.py
 apps/api/app/core/demo_data.py
 apps/api/app/core/real_data.py
+apps/api/app/core/regions.py
 apps/api/app/core/schemas.py
 apps/api/medflow_ai.egg-info/PKG-INFO
 apps/api/medflow_ai.egg-info/SOURCES.txt

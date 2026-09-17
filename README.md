@@ -1,51 +1,10 @@
-# MedFlow AI
+# MedFlow AI — GovTech Camp, Case 1
 
-AI-powered decision-support platform for hospital load forecasting and early risk detection. MedFlow AI helps health-system analysts monitor aggregate patient-flow pressure, investigate anomalies, and review short-term queue forecasts in one calm, auditable workspace.
+Панель операционной аналитики стационаров: снимок очереди, дневные регистрации, статистические сигналы и краткосрочный прогноз. Решения принимает специалист после проверки первичных данных.
 
-> A GovTech Camp prototype. It supports operational review; it does not diagnose patients, prescribe treatment, or replace accountable human decision-making.
+## Запуск
 
-## Key capabilities
-
-- Monitor current waiting queues across medical organizations
-- Forecast the near-term hospital-load target with an uncertainty interval
-- Surface statistically unusual queue observations with a human-readable explanation
-- Review forecast contributors and model limitations in context
-- Keep synthetic demonstrations clearly separated from operational source data
-
-## Architecture
-
-```mermaid
-flowchart LR
-    A[Approved aggregate data sources] --> B[Profiling and adapters]
-    B --> C[Canonical periods and validation]
-    C --> D[Past-only feature engineering]
-    D --> E[Chronological validation and model artifacts]
-    E --> F[FastAPI analytics API]
-    F --> G[Next.js operations dashboard]
-```
-
-The application reads the real local extracts in `data/raw/`; synthetic files are not part of the serving or ML flow. It discovers the actual waiting-list schema (`mo_destination_code`, `registration_dt`, `region_origin_code`) and aggregates it into daily registrations by destination code. More detail: [architecture](docs/ARCHITECTURE.md), [data model](docs/DATA_MODEL.md), and [ML methodology](docs/ML_METHODOLOGY.md).
-
-## Data setup
-
-Real healthcare datasets are intentionally excluded from version control for privacy, access/licensing, repository-size, and reproducibility reasons. Do not commit sensitive healthcare data.
-
-1. Obtain the authorized files from the organizers or data owner.
-2. Place raw extracts in `data/raw/`.
-3. Run the read-only inventory/profiling step: `python scripts/profile_data.py`.
-4. Review mappings and data-quality findings before ingestion, training, or operational use.
-
-`scripts/profile_data.py` is streaming: it records schemas, encodings, row counts, sampled null/distinct counts and sensitive-looking column names without exposing cell values. It does not load an entire extract into memory.
-
-## Quick start
-
-### Prerequisites
-
-- Python 3.12+
-- Node.js 18+
-- npm
-
-Start the API:
+Требуются Python 3.12+, Node.js 18+ и npm.
 
 ```bash
 python3 -m venv .venv
@@ -54,7 +13,7 @@ pip install -e .
 uvicorn app.main:app --app-dir apps/api --reload --port 8000
 ```
 
-In a second terminal, start the dashboard:
+Во втором терминале:
 
 ```bash
 cd frontend
@@ -62,43 +21,64 @@ npm install
 npm run dev
 ```
 
-Open the dashboard at `http://localhost:3000` and the API documentation at `http://localhost:8000/docs`.
+Панель: http://localhost:3000. API: http://localhost:8000/docs. `NEXT_PUBLIC_API_URL` задаёт адрес API, по умолчанию `http://127.0.0.1:8000/api/v1`.
 
-## Development
+## Данные и ML
 
-| Area | Command |
-| --- | --- |
-| Backend and ML tests | `pytest` |
-| Python linting | `ruff check .` |
-| Frontend type check | `cd frontend && npm run typecheck` |
-| Frontend production build | `cd frontend && npm run build` |
-| Data profiling | `python scripts/profile_data.py` |
-| Generate demo-only source file | `python scripts/generate_demo_data.py` |
+Разрешённые исходные выгрузки размещаются в `data/raw/`; медицинские данные, БД и артефакты исключены из Git. `python scripts/profile_data.py` выполняет потоковое профилирование. Синтетический файл не используется в API или обучении.
 
-Docker can run the API service:
+CSV очереди читается потоково один раз для построения агрегатов. Кеш `ml/artifacts/queue_arrivals_aggregates.joblib` проверяется по имени, размеру, времени изменения источника и `MEDFLOW_MAX_RAW_ROWS`. Модель Ridge и метаданные сохраняются отдельно. HTTP-запросы используют агрегаты в памяти. После замены raw-файлов перезапустите API; нельзя изменять источник во время обучения. Артефакты joblib должны быть только доверенными локальными файлами.
+
+Цель `daily_waiting_registrations` — число регистраций за день среди записей в предоставленном снимке. Это **не прогноз будущего размера очереди** и не полный исторический поток поступлений: уже выбывшие записи отсутствуют. Текущая очередь показывается отдельно. Изменение прогноза сравнивается только с последним дневным значением; риск сравнивает дневное значение с предыдущими днями.
+
+Признаки: организация назначения, день недели, lag-1, lag-7, среднее за предыдущие 7 дней. Финальные 20% дат — хронологическая validation. Основные метрики MAE/RMSE; baseline — последнее дневное значение. Вторичный MAPE использует max(target,1) в знаменателе и нестабилен около нуля. Интервалы основаны на остатках validation и приближённые. Вклады и модули коэффициентов не доказывают причинность и зависят от масштаба признаков.
+
+В raw обнаружены коды `10,11,15,19,23,27,31,33,35,39,43,47,55,59,61,62,63,71,75,79`. Отдельного справочника там нет. Названия сверены с [КАТО НК РК 11-2025, БНС](https://stat.gov.kz/ru/classifiers/statistical/21/); нормализация находится в `apps/api/app/core/regions.py`. Неизвестные коды показываются явно, исходный код сохраняется. Регион — происхождение пациентов. Регион организации в таблице — наиболее частый регион происхождения её пациентов, а не адрес МО. Региональные суммы используют фактический регион каждой записи.
+
+## Вход
+
+`/register` сохраняет id, уникальный нормализованный email, scrypt password_hash, имя и created_at в SQLite `data/processed/auth.sqlite3`; путь можно изменить через `MEDFLOW_DB`. Пароли 8–128 символов, случайная соль на пользователя. `/login` проверяет хеш и создаёт случайный токен сессии на 8 часов. В БД хранится только SHA-256 токена. `/auth/logout` отзывает сессию. Аналитические API требуют `Authorization: Bearer <token>`. Регистрация возвращает 400 при неверных данных, 409 при повторном email; вход — 401 при неверных учётных данных.
+
+ЭЦП DEMO — отдельная явно демонстрационная сессия. Сертификаты, подпись и интеграция НУЦ РК отсутствуют. При внешнем размещении требуется HTTPS и ограничение доступа к исходникам и БД.
+
+## Пагинация и проверки
+
+`GET /api/v1/organizations`: `page`, `page_size`, `region_id`, `risk`, `search`, `sort` (`risk`, `name`, `waiting`). Фильтрация и сортировка предшествуют пагинации. Ответ: `page`, `page_size`, `total`, `total_pages`, `items`. По умолчанию 25, максимум 100, UI предлагает 25/50/100. `/anomalies` имеет тот же формат страниц. `/summary` и `/regions` возвращают только компактные агрегаты; `/history` ограничен 84 днями. Raw не отправляется в браузер.
 
 ```bash
-docker compose up --build
+.venv/bin/pytest
+.venv/bin/ruff check .
+cd frontend
+npm run typecheck
+npm run build
 ```
 
-## Project structure
+Каталоги: `apps/api/` — FastAPI и auth; `frontend/` — Next.js; `ml/` — признаки и артефакты; `data/` — локальные источники; `docs/` — [архитектура](docs/ARCHITECTURE.md), [методология](docs/ML_METHODOLOGY.md), [конфиденциальность](docs/PRIVACY.md). `docker compose up --build` запускает API.
 
-```text
-apps/api/       FastAPI endpoints and analytics adapters
-frontend/       Next.js operational dashboard
-ml/             Feature engineering and ML tests
-data/           Local-only raw, interim, and processed data directories
-scripts/        Profiling and synthetic-demo utilities
-config/         Risk thresholds and approved configuration
-docs/           Architecture, privacy, methodology, and data documentation
-```
+---
 
-## ML approach, explainability, and limitations
+# English
 
-The pipeline trains a persisted Ridge model (`ml/artifacts/queue_arrivals_ridge.joblib`) and matching metadata JSON from the real waiting-list extract. Features are past-only `lag_1`, `lag_7`, trailing seven-day mean, weekday, and destination code; unknown codes are ignored safely by the encoder. The final chronological 20% of dates is held out. The API reports MAE, RMSE, MAPE and naïve lag-1 baseline MAE, the training timestamp/version, and a 95% residual interval.
+MedFlow AI is a GovTech Camp Case 1 hospital operations dashboard. It shows the supplied queue snapshot, daily registrations, anomaly signals and short-term daily forecasts. Specialists must verify signals against source data.
 
-The dashboard contains global coefficient magnitude and local signed linear contributions for each first forecast point. These are model associations, not causes. The supplied source is a **single waiting-list snapshot**, not a sequence of historic total-backlog snapshots: therefore the supported target is `daily_waiting_registrations` (new entries grouped by destination code), not a forecast of total future queue size. Missing/corrupt dates are dropped and counted in metadata. Forecasts are decision-support signals, not medical recommendations.
+## Run locally
 
-`/login` and `/register` are deliberately demo-only in-memory email/password flows. “Войти через ЭЦП” is an explicit presentation confirmation only; it does not create signatures, inspect certificates, or integrate with НУЦ РК.
+Use Python 3.12+, Node.js 18+ and npm. Create a virtual environment, install with `pip install -e .`, then run `uvicorn app.main:app --app-dir apps/api --reload --port 8000`. In `frontend/`, run `npm install` and `npm run dev`. Open http://localhost:3000; API docs are at http://localhost:8000/docs. `NEXT_PUBLIC_API_URL` overrides the API base URL.
 
-Current limitations include the absence of authorized real data in this repository, no production database/migrations, no authenticated access layer, and no production model artifact. Review [privacy guidance](docs/PRIVACY.md) before using any data beyond the synthetic demonstration.
+Place authorized extracts in `data/raw/`. Raw healthcare data, SQLite files and model artifacts are ignored by Git. Profiling and CSV aggregation stream records. Persisted aggregates are invalidated by source file metadata and row limit; request handlers reuse in-memory aggregates. Restart the API after replacing source files. Only trusted locally generated joblib artifacts may be loaded.
+
+## Authentication
+
+Registration persists users in SQLite with unique normalized email, salted scrypt hash, name and creation timestamp. Passwords require 8–128 characters. Login creates a revocable opaque session valid for 8 hours; only token hashes are stored. Analytics endpoints require Bearer authorization. Logout revokes the session. `MEDFLOW_DB` overrides `data/processed/auth.sqlite3`. Validation returns 400, duplicate email 409, invalid credentials 401. ECP DEMO is a separate presentation login without certificates, signatures or NCA RK integration. External deployments require HTTPS and restricted source/database access.
+
+## Analytics and limitations
+
+The target `daily_waiting_registrations` counts dated registrations remaining in one waiting-list snapshot. It does not forecast total queue size or recover the full historical arrival stream. Queue totals and daily forecasts are separate; forecast changes and risk use comparable daily values only.
+
+Ridge uses destination code, weekday, lag-1, lag-7 and trailing seven-day mean. The final 20% of dates form chronological validation. MAE/RMSE are primary metrics; lag-1 persistence is the baseline. Secondary MAPE uses max(target,1), and is unstable near zero. Residual intervals are approximate; linear contributions are associations, not causes.
+
+Observed region prefixes were checked against official KATO; unknown codes retain an explicit unknown label and their source code. Regions describe patient origin, not destination location. Organization grouping uses the dominant patient-origin region; regional totals count each record's actual origin.
+
+Organization and anomaly endpoints paginate server-side with `page`, `page_size`, `total`, `total_pages`, `items`; the default is 25 and maximum 100. Search, filters and sorting run before pagination. The browser receives bounded pages and compact aggregates, never raw extracts.
+
+Validate with `.venv/bin/pytest`, `.venv/bin/ruff check .`, and `npm run typecheck` / `npm run build` inside `frontend/`.
