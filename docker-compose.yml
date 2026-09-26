@@ -2,5 +2,10 @@ services:
   api:
     build: .
     ports: ["8000:8000"]
+    env_file: [.env]
     environment:
       CORS_ORIGINS: http://localhost:3000
+    volumes:
+      - ./data/raw:/app/data/raw:ro
+      - ./data/processed:/app/data/processed
+      - ./ml/artifacts:/app/ml/artifacts:ro

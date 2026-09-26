@@ -4,3 +4,6 @@ pydantic>=2.8
 polars>=1.0
 scikit-learn>=1.5
 sqlalchemy>=2.0
+joblib>=1.4
+numpy>=2.0
+PyYAML>=6.0

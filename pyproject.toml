@@ -3,7 +3,7 @@ name = "medflow-ai"
 version = "0.1.0"
 description = "Early warning and forecasting MVP for hospital flow"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "pydantic>=2.8", "polars>=1.0", "scikit-learn>=1.5", "sqlalchemy>=2.0"]
+dependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "pydantic>=2.8", "polars>=1.0", "scikit-learn>=1.5", "sqlalchemy>=2.0", "joblib>=1.4", "numpy>=2.0", "PyYAML>=6.0"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -14,7 +14,8 @@ package-dir = {"" = "apps/api"}
 
 [tool.setuptools.packages.find]
 where = ["apps/api"]
-include = ["app*"]
+include = ["app", "app.*"]
+namespaces = false
 
 [tool.ruff]
 line-length = 100

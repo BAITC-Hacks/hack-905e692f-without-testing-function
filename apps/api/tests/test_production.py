@@ -1,4 +1,3 @@
-import sqlite3
 from datetime import date, timedelta
 
 import pytest
@@ -12,22 +11,16 @@ from app.main import (
     logout,
     organization_summaries,
     organizations,
-    register,
 )
 from fastapi import HTTPException
 
 
-def test_persistent_auth_and_revocation(tmp_path, monkeypatch):
+def test_admin_auth_and_revocation(tmp_path, monkeypatch):
     monkeypatch.setattr(auth, "DB", tmp_path / "auth.sqlite3")
-    payload = {"email": "Analyst@example.org", "password": "secure-password-12", "name": "Аналитик"}
-    result = register(payload)
-    with sqlite3.connect(auth.DB) as connection:
-        row = connection.execute("SELECT email,password_hash,name,created_at FROM users").fetchone()
-    assert row[0] == "analyst@example.org" and row[2] == "Аналитик" and row[3]
-    assert row[1].startswith("scrypt$") and payload["password"] not in row[1]
-    with pytest.raises(HTTPException) as duplicate:
-        register(payload)
-    assert duplicate.value.status_code == 409
+    payload = {"email": "Admin@example.org", "password": "secure-password-12"}
+    monkeypatch.setenv("ADMIN_EMAIL", payload["email"])
+    monkeypatch.setenv("ADMIN_PASSWORD_HASH", auth.password_hash(payload["password"]))
+    result = login(payload)
     logout("Bearer " + result["access_token"])
     with pytest.raises(HTTPException) as expired:
         auth.session("Bearer " + result["access_token"])
@@ -37,9 +30,9 @@ def test_persistent_auth_and_revocation(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as bad_password:
         login({**payload, "password": "wrong-password"})
     assert bad_password.value.status_code == 401
-    with pytest.raises(HTTPException) as invalid:
-        register({**payload, "email": "invalid"})
-    assert invalid.value.status_code == 400
+    with pytest.raises(HTTPException) as bad_email:
+        login({**payload, "email": "wrong@example.org"})
+    assert bad_email.value.status_code == 401
 
 
 def test_region_names():
@@ -58,9 +51,14 @@ def test_filter_sort_before_page(monkeypatch):
         "app.main.dataset",
         lambda: {
             "rows": rows,
-            "metadata": {"organization_counts": {f"{org:03}": 9000 for org in range(120)}},
+            "metadata": {
+                "organization_counts": {f"{org:03}": 9000 for org in range(120)},
+                "metrics": {"mae": 1},
+                "model_version": "test-model",
+            },
         },
     )
+    monkeypatch.setattr("app.main._batch_next_day_forecasts", lambda: {f"{org:03}": 2.0 for org in range(120)})
     _grouped.cache_clear()
     organization_summaries.cache_clear()
     try:
@@ -75,7 +73,7 @@ def test_filter_sort_before_page(monkeypatch):
         assert all(r.region_id == "71" for r in first["items"])
         assert first["items"][0].latest_waiting == 9000
         assert first["items"][0].latest_daily_registrations == 2
-        assert first["items"][0].risk == "low"
+        assert first["items"][0].risk == "attention"
     finally:
         _grouped.cache_clear()
         organization_summaries.cache_clear()

@@ -9,3 +9,6 @@ Requires-Dist: pydantic>=2.8
 Requires-Dist: polars>=1.0
 Requires-Dist: scikit-learn>=1.5
 Requires-Dist: sqlalchemy>=2.0
+Requires-Dist: joblib>=1.4
+Requires-Dist: numpy>=2.0
+Requires-Dist: PyYAML>=6.0

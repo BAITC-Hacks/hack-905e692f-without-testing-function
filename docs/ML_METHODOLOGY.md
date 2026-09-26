@@ -1,13 +1,35 @@
 # ML methodology
 
-## Current state
+## Forecast semantics
 
-No real dataset is available, therefore no trained ML artifact or quality metric is claimed. The running demo uses a transparent persistence baseline on synthetic aggregates only. `GET /metrics` explicitly reports `not_trained`.
+The target is `daily_waiting_registrations`: the count of records registered on a day and still present in the supplied waiting-list snapshot. It is **not future total queue size** and it is not the complete historical arrival stream. The current queue snapshot is displayed independently and enters only the transparent risk layer.
 
-## Proposed controlled pipeline
+## Model and validation
 
-The target is observed aggregate `waiting` per verified organization-period. Observation unit and horizon follow source granularity (daily: 7/14/30 days; weekly: 1/2/4 weeks; monthly: 1/2/3 months) and must be shortened for inadequate history. Candidate models: seasonal naive, persistence, Ridge, Extra Trees, then CatBoost only after baseline comparison.
+The current production artifact is Ridge Regression with destination-organization one-hot encoding plus weekday, lag-1, lag-7 and trailing seven-day mean. Every lag uses only observations strictly before the target day. The final 20% of dates is held out chronologically; random split is prohibited.
 
-Features include only data available at forecast cutoff: lags, trailing rolling statistics, calendar fields, and semantically valid aggregate ratios. Validation is chronological expanding-window or holdout; random splitting is prohibited. MAE, RMSE and sMAPE are calculated only on held-out periods. Intervals use held-out residual/conformal quantiles. SHAP is applied only to a fitted tree model and surfaced as actual signed contributions.
+The persisted metadata contains model id/version, algorithm, target, features, train/validation periods, trained time, MAE, RMSE, WAPE, persistence baseline MAE, dataset fingerprint and residual spread. Metrics shown by the UI come only from the persisted validation metadata. MAPE is not a primary metric because targets often approach zero.
 
-Limitations: a forecast is association, not causation; it cannot measure bed occupancy without validated bed data; source revisions, sparse series, changed reporting practice and unobserved operational factors may invalidate estimates.
+Ridge remains selected because it is interpretable and currently improves held-out MAE over lag-1 persistence. A tree model is not labelled production without a reproducible chronological comparison and a semantically valid treatment of the high-cardinality organization feature.
+
+## Explainability
+
+For one forecast, each local contribution is calculated as the transformed feature value multiplied by its fitted Ridge coefficient. The intercept is shown as the baseline and signed contributions reconcile to the raw linear prediction before non-negative clipping. One-hot organization features are grouped under the human label “historical organization profile”; raw transformed names are not displayed.
+
+Global values are coefficient magnitudes and depend on feature scale. Local and global explanations describe statistical associations, not causality. Approximate forecast intervals use chronological holdout residual dispersion and are not guaranteed coverage intervals.
+
+## Risk
+
+Prediction and risk are separate. `config/risk_thresholds.yaml` controls points for forecast-to-history ratio, recent trend, latest anomaly z-score, current queue snapshot and forecast error. The result contains a 0–100 score, `normal/attention/high/critical` level, reasons, checks and model version. No organization identifier appears in a rule.
+
+## Lifecycle
+
+`data/raw → validation → persisted aggregates → explicit train → joblib artifact + JSON metadata → lazy runtime load → API → frontend`.
+
+Run explicit training after authorized source changes:
+
+```bash
+PYTHONPATH=apps/api .venv/bin/python scripts/train_model.py
+```
+
+Only trusted locally produced joblib files may be loaded.

@@ -33,6 +33,11 @@ class DataUnavailable(RuntimeError):
     pass
 
 
+class ModelNotReady(RuntimeError):
+    """The dataset may be available, but no compatible trusted model artifact exists."""
+
+
+
 @dataclass
 class QueueRow:
     day: date
@@ -155,7 +160,7 @@ def training_periods(rows, cutoff):
     return periods
 
 
-def train_or_load() -> dict[str, object]:
+def _load_aggregates() -> tuple[list[QueueRow], dict[str, object]]:
     path = _waiting_file()
     fingerprint = _fingerprint(path)
     row_limit = int(os.getenv("MEDFLOW_MAX_RAW_ROWS", "0"))
@@ -177,21 +182,50 @@ def train_or_load() -> dict[str, object]:
             temporary,
         )
         temporary.replace(cache_path)
-    if MODEL_PATH.exists() and METADATA_PATH.exists():
+    return rows, source
+
+
+def load_runtime() -> dict[str, object]:
+    """Load persisted aggregates and model only; HTTP requests never train a model."""
+    rows, source = _load_aggregates()
+    fingerprint = source["source_fingerprint"]
+    if not MODEL_PATH.exists() or not METADATA_PATH.exists():
+        raise ModelNotReady("Model artifact or metadata is missing. Run the training command.")
+    try:
         metadata = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
-        if (
-            metadata.get("source_fingerprint") == fingerprint
-            and metadata.get("source_row_limit") == source["source_row_limit"]
-        ):
-            return {
-                "bundle": joblib.load(MODEL_PATH),
-                "metadata": {
-                    **metadata,
-                    **source,
-                    **training_periods(rows, metadata["metrics"]["split_date"]),
-                },
-                "rows": rows,
-            }
+        bundle = joblib.load(MODEL_PATH)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+        raise ModelNotReady(f"Model artifact cannot be loaded: {type(error).__name__}") from error
+    if metadata.get("source_fingerprint") != fingerprint:
+        raise ModelNotReady("Model artifact does not match the current dataset fingerprint.")
+    if metadata.get("source_row_limit") != source["source_row_limit"]:
+        raise ModelNotReady("Model artifact was trained with a different row-limit configuration.")
+    required = {"pipeline", "feature_names", "coefficients", "intercept"}
+    if not required.issubset(bundle):
+        raise ModelNotReady("Model artifact has an incompatible schema.")
+    metrics = metadata.setdefault("metrics", {})
+    metadata.setdefault("model_id", "queue-arrivals-ridge")
+    metadata.setdefault("algorithm", "Ridge Regression")
+    metadata.setdefault("dataset_fingerprint", fingerprint)
+    metadata.setdefault("model_version", f"ridge-{fingerprint}")
+    metadata.setdefault("baseline_metrics", {"mae": metrics.get("baseline_mae")})
+    metadata.setdefault("validation_strategy", "chronological holdout (last 20% of dates)")
+    return {
+        "bundle": bundle,
+        "metadata": {**metadata, **source, **training_periods(rows, metrics["split_date"])},
+        "rows": rows,
+    }
+
+
+def train_or_load(force_train: bool = False) -> dict[str, object]:
+    """Explicit training entrypoint used by CLI/tests, never implicitly by request handlers."""
+    rows, source = _load_aggregates()
+    fingerprint = source["source_fingerprint"]
+    if not force_train:
+        try:
+            return load_runtime()
+        except ModelNotReady:
+            pass
     features, targets, aligned = _features(rows)
     distinct_days = sorted({row.day for row in aligned})
     if len(distinct_days) < 20 or len(features) < 50:
@@ -217,9 +251,7 @@ def train_or_load() -> dict[str, object]:
     metrics = {
         "mae": round(float(mean_absolute_error(actual, predicted)), 3),
         "rmse": round(float(mean_squared_error(actual, predicted) ** 0.5), 3),
-        "mape": round(
-            float(np.mean(np.abs((actual - predicted) / np.maximum(actual, 1))) * 100), 3
-        ),
+        "wape": round(float(np.sum(np.abs(actual - predicted)) / max(np.sum(actual), 1) * 100), 3),
         "baseline_mae": round(float(mean_absolute_error(actual, baseline)), 3),
         "test_rows": len(test_idx),
         "train_rows": len(train_idx),
@@ -247,11 +279,16 @@ def train_or_load() -> dict[str, object]:
         **source,
         **training_periods(rows, str(cutoff)),
         "model_version": f"ridge-{fingerprint}",
+        "model_id": "queue-arrivals-ridge",
+        "algorithm": "Ridge Regression",
         "trained_at": datetime.now().astimezone().isoformat(),
         "target": TARGET_NAME,
         "target_description": "Daily count of records registered in the supplied waiting-list snapshot, grouped by mo_destination_code.",
         "features": ["organization_id", "dow", "lag_1", "lag_7", "mean_7"],
         "metrics": metrics,
+        "baseline_metrics": {"mae": metrics["baseline_mae"]},
+        "dataset_fingerprint": fingerprint,
+        "validation_strategy": "chronological holdout (last 20% of dates)",
         "global_importance": importance,
         "limitations": "The source is one waiting-list snapshot, not daily historical backlog snapshots. The model forecasts daily new waiting-list registrations, not future total queue size. Origin region is used only for grouping and is not a destination-organization region.",
     }
@@ -286,4 +323,4 @@ def local_contributors(
                     "contribution": round(contribution, 3),
                 }
             )
-    return sorted(entries, key=lambda item: abs(float(item["contribution"])), reverse=True)[:6]
+    return sorted(entries, key=lambda item: abs(float(item["contribution"])), reverse=True)[:10]

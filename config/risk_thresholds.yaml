@@ -1,5 +1,11 @@
-# Prototype analytical thresholds, not clinical norms or operational regulations.
-waiting_growth_medium_pct: 10
-waiting_growth_high_pct: 25
-waiting_growth_critical_pct: 50
-anomaly_z_score: 2.5
+# Decision-support thresholds. These are analytical settings, not clinical norms.
+forecast_ratio_attention: 1.15
+forecast_ratio_high: 1.35
+forecast_ratio_critical: 1.75
+trend_high_pct: 20
+trend_critical_pct: 50
+anomaly_high_z: 2.5
+anomaly_critical_z: 3.5
+queue_high: 500
+queue_critical: 1500
+uncertainty_high: 20
