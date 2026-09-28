@@ -9,7 +9,7 @@ services:
       - ./ml/artifacts:/app/ml/artifacts:ro
       - app-state:/app/state
     read_only: true
-    tmpfs: [/tmp:size=128m,mode=1777]
+    tmpfs: ["/tmp:size=128m,mode=1777"]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
@@ -24,7 +24,7 @@ services:
     environment: {API_INTERNAL_URL: "http://api:8000"}
     expose: ["3000"]
     read_only: true
-    tmpfs: [/tmp:size=64m,mode=1777]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
@@ -35,17 +35,15 @@ services:
     image: nginxinc/nginx-unprivileged:1.27.3-alpine
     depends_on: [frontend, api]
     environment: {DOMAIN: "${DOMAIN:?set DOMAIN in .env}"}
-    ports: ["80:8080", "443:8443"]
+    ports: ["8024:8080"]
     volumes:
       - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ./deploy/certbot/www:/var/www/certbot:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
     read_only: true
-    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+    tmpfs: [/var/cache/nginx, /var/run, /tmp, "/etc/nginx/conf.d:uid=101,gid=101,mode=0755"]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
-    networks: [internal]
+    networks: [internal, edge]
   pipeline:
     profiles: [pipeline]
     build: {context: ., dockerfile: Dockerfile}
@@ -61,5 +59,6 @@ services:
     networks: [internal]
 networks:
   internal: {internal: true}
+  edge: {}
 volumes:
   app-state:

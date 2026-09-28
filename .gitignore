@@ -4,8 +4,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 node_modules/
+.github
+.env
+.nvmrc/
 .next/
 *.tsbuildinfo
+.nvmrc
 data/raw/*
 !data/raw/.gitkeep
 data/interim/*

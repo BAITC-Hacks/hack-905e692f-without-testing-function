@@ -1,5 +1,27 @@
 # Production deployment — Ubuntu 22.04 LTS VPS
 
+## GovTech Camp (authoritative deployment path)
+
+Public URL: `https://without-testing-function.govtech-kz.com`. GovTech manages the external Caddy, HTTPS and certificates; this project must not bind host `80/443`, configure Caddy, or use Certbot. The only published application port is `8024:8080`; FastAPI (`8000`) and Next.js (`3000`) are internal-only.
+
+```bash
+docker compose -f docker-compose.prod.yml config
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail=100
+curl --fail --show-error http://127.0.0.1:8024/api/v1/health
+curl --fail --show-error https://without-testing-function.govtech-kz.com/api/v1/health
+```
+
+Stop only this deployment with `docker compose -f docker-compose.prod.yml down`; inspect it with `docker compose -f docker-compose.prod.yml logs -f`. After `git pull --ff-only`, run `config`, `build`, then `up -d` again. For rollback, check out a known-good commit, rebuild, `up -d`, and verify the local health endpoint.
+
+`data/processed/` and `ml/artifacts/` contain the published mart and model artifact mounted read-only at runtime. The `pipeline` profile is intentionally separate and never starts with ordinary production startup. Do not put raw data into HTTP paths or run ingestion/training on the shared VPS unless explicitly required.
+
+If artifacts need delivery through the private S3-compatible bucket, authenticate outside this repository and copy only the approved processed/model artifacts. Do not put access keys in `.env`, Git, shell history, or logs. A missing or invalid artifact is reported by health as `MODEL_NOT_READY`/`DATA_UNAVAILABLE`.
+
+Troubleshooting: for `502`, first check `docker compose -f docker-compose.prod.yml ps` and service logs; for `unhealthy`, query the internal API health command above and inspect only the affected service. If `http://127.0.0.1:8024` works but the public URL fails, the application deployment is healthy and GovTech external routing needs attention; do not change system Caddy.
+
 Замените `example.gov.kz`, `YOUR_SERVER_IP` и repository URL своими значениями. Не вставляйте secrets в shell history или Git.
 
 ## 1. VPS prerequisites

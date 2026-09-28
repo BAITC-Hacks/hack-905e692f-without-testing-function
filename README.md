@@ -124,7 +124,7 @@ Raw может содержать чувствительные и квазиид
 | ML | scikit-learn 1.9.0, NumPy 2.5.3, joblib 1.6.0 |
 | Database | SQLite 3: sessions, login rate limit, actions, reports, audit |
 | Security | Argon2id, RBAC, token digests, TrustedHost/CORS, request limits |
-| Proxy | Nginx unprivileged 1.27.3, TLS 1.2/1.3 |
+| Proxy | Nginx unprivileged 1.27.3; TLS завершается внешним GovTech proxy |
 | Deployment | Docker Compose, read-only runtimes, dropped capabilities |
 
 ## Project Structure
@@ -266,11 +266,12 @@ docker compose config
 docker compose up --build api
 ```
 
-Production публикует только Nginx `80/443`; API и frontend остаются во внутренней network:
+Production публикует только Nginx на host-порту `8024`; API и frontend остаются во внутренней network. В GovTech Camp внешний HTTPS и сертификаты обслуживаются инфраструктурой организаторов:
 
 ```bash
 docker compose -f docker-compose.prod.yml config
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 Полный порядок TLS, data placement и permissions: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
