@@ -1,11 +1,21 @@
 services:
   api:
     build: .
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     env_file: [.env]
     environment:
+      APP_ENV: development
       CORS_ORIGINS: http://localhost:3000
+      TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+      MEDFLOW_DB: /app/state/app.sqlite3
     volumes:
-      - ./data/raw:/app/data/raw:ro
-      - ./data/processed:/app/data/processed
+      - ./data/processed:/app/data/processed:ro
       - ./ml/artifacts:/app/ml/artifacts:ro
+      - app-state:/app/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  app-state:

@@ -15,6 +15,21 @@ from html import escape
 from pathlib import Path
 
 DISCLAIMER = "Decision Support: рекомендации не являются обязательными решениями и требуют проверки ответственным специалистом."
+EXPORT_FIELDS = ["organization", "region", "current_queue", "daily_forecast", "risk_level", "risk_score"]
+MAX_EXPORT_ROWS = 10_000
+
+
+def _spreadsheet_safe(value: object) -> object:
+    """Prevent spreadsheet formula execution while preserving numeric values."""
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
+def _safe_rows(rows: list[dict]) -> list[dict]:
+    if len(rows) > MAX_EXPORT_ROWS:
+        raise ValueError("Export row limit exceeded")
+    return [{key: _spreadsheet_safe(row.get(key, "")) for key in EXPORT_FIELDS} for row in rows]
 
 
 def checksum(snapshot: dict) -> str:
@@ -24,10 +39,9 @@ def checksum(snapshot: dict) -> str:
 
 def csv_export(rows: list[dict]) -> bytes:
     output = io.StringIO()
-    fields = ["organization", "region", "current_queue", "daily_forecast", "risk_level", "risk_score"]
-    writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
+    writer = csv.DictWriter(output, fieldnames=EXPORT_FIELDS, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows(_safe_rows(rows))
     return output.getvalue().encode("utf-8-sig")
 
 
@@ -35,6 +49,7 @@ def xlsx_export(rows: list[dict]) -> bytes:
     """Create a compact standards-compliant XLSX without adding a runtime dependency."""
     headers = ["Организация", "Регион", "Текущая очередь", "Прогноз регистраций/день", "Риск", "Балл риска"]
     keys = ["organization", "region", "current_queue", "daily_forecast", "risk_level", "risk_score"]
+    rows = _safe_rows(rows)
     shared = headers + [str(row.get(key, "")) for row in rows for key in keys]
     unique = list(dict.fromkeys(shared))
     indexes = {value: index for index, value in enumerate(unique)}

@@ -1,0 +1,65 @@
+services:
+  api:
+    build: {context: ., dockerfile: Dockerfile}
+    env_file: [.env]
+    environment: {APP_ENV: production, MEDFLOW_DB: /app/state/app.sqlite3}
+    expose: ["8000"]
+    volumes:
+      - ./data/processed:/app/data/processed:ro
+      - ./ml/artifacts:/app/ml/artifacts:ro
+      - app-state:/app/state
+    read_only: true
+    tmpfs: [/tmp:size=128m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [internal]
+  frontend:
+    build: {context: frontend, dockerfile: Dockerfile}
+    environment: {API_INTERNAL_URL: "http://api:8000"}
+    expose: ["3000"]
+    read_only: true
+    tmpfs: [/tmp:size=64m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [internal]
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.27.3-alpine
+    depends_on: [frontend, api]
+    environment: {DOMAIN: "${DOMAIN:?set DOMAIN in .env}"}
+    ports: ["80:8080", "443:8443"]
+    volumes:
+      - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./deploy/certbot/www:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    networks: [internal]
+  pipeline:
+    profiles: [pipeline]
+    build: {context: ., dockerfile: Dockerfile}
+    env_file: [.env]
+    command: ["python", "-m", "app.cli", "ingest"]
+    volumes:
+      - ./data/raw:/app/data/raw:ro
+      - ./data/interim:/app/data/interim
+      - ./data/processed:/app/data/processed
+      - ./ml/artifacts:/app/ml/artifacts
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [internal]
+networks:
+  internal: {internal: true}
+volumes:
+  app-state:

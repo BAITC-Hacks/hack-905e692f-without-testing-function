@@ -21,5 +21,9 @@ data/processed/*
 *.parquet
 *.feather
 *.arrow
+*.sqlite3-*
+backups/
+deploy/certbot/www/*
+!deploy/certbot/www/.gitkeep
 ml/artifacts/*
 !ml/artifacts/.gitkeep

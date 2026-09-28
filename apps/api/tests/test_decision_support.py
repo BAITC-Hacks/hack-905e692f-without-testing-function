@@ -21,6 +21,8 @@ def test_missing_model_is_structured(monkeypatch, tmp_path):
 
     monkeypatch.setattr(module, "MODEL_PATH", tmp_path / "missing.joblib")
     monkeypatch.setattr(module, "METADATA_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(module, "MODEL_CURRENT", tmp_path / "missing-current.json")
+    monkeypatch.setattr(module, "MODEL_VERSIONS", tmp_path / "missing-versions")
     with pytest.raises(module.ModelNotReady):
         module.load_runtime()
 
@@ -62,7 +64,7 @@ def test_report_exports_are_real_files():
 
 def test_ridge_local_contributions_reconstruct_prediction():
     bundle = joblib.load(MODEL_PATH)
-    row = ["22ND", 1, 10, 8, 9.0]
+    row = ["22ND", 1, 3, 0, 10, 8, 7, 6, 9.0, 1.2, 0.5, 0.1]
     transformed = bundle["pipeline"].named_steps["preprocess"].transform([row])
     transformed = transformed.toarray()[0] if hasattr(transformed, "toarray") else transformed[0]
     reconstructed = bundle["intercept"] + sum(float(v) * float(c) for v, c in zip(transformed, bundle["coefficients"], strict=True))

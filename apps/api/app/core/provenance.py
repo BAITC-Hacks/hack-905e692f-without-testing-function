@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -13,13 +12,9 @@ def data_sources(metadata: dict[str, object] | None = None) -> list[dict[str, ob
     result = []
     for item in profiles:
         path = ROOT / item["file"]
-        if not path.exists():
-            status, freshness, modified = "unavailable", "Источник отсутствует", None
-        else:
-            modified_dt = datetime.fromtimestamp(path.stat().st_mtime).astimezone()
-            modified = modified_dt.isoformat(timespec="seconds")
-            status, freshness = "available", "Пакетная выгрузка"
         is_training_source = metadata and path.name == metadata.get("source_file")
+        status = "available" if is_training_source else "inventory_only"
+        freshness = "Проверенная offline ingestion" if is_training_source else "Не входит в текущую витрину"
         result.append(
             {
                 "id": path.stem,
@@ -27,7 +22,7 @@ def data_sources(metadata: dict[str, object] | None = None) -> list[dict[str, ob
                 "dataset": path.name,
                 "status": status,
                 "records_processed": metadata.get("raw_records_used") if is_training_source else item.get("rows"),
-                "last_successful_ingestion": metadata.get("trained_at") if is_training_source else modified,
+                "last_successful_ingestion": metadata.get("created_at") if is_training_source else None,
                 "dataset_period": metadata.get("date_range") if is_training_source else None,
                 "schema_version": "CSV columns: " + ", ".join(item.get("columns", [])),
                 "freshness": freshness,

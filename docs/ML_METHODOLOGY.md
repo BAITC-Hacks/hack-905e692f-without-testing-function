@@ -1,35 +1,37 @@
 # ML methodology
 
-## Forecast semantics
+## Target semantics
 
-The target is `daily_waiting_registrations`: the count of records registered on a day and still present in the supplied waiting-list snapshot. It is **not future total queue size** and it is not the complete historical arrival stream. The current queue snapshot is displayed independently and enters only the transparent risk layer.
+`daily_waiting_registrations` — число регистраций на organization/day среди записей, сохранившихся в предоставленном waiting-list snapshot. Это не прогноз полного размера очереди и не полный historical arrival stream. `current_waiting_snapshot` используется отдельно в прозрачном risk layer.
+
+## Features and preprocessing
+
+После заполнения отсутствующих дней нулями для каждой организации строятся: `day_of_week`, `month`, `is_weekend`, lag 1/7/14/28, rolling mean/std 7, разность последних двух семидневных средних и historical anomaly z-score. Все lag/window используют только прошлые значения. Первые 28 точек каждой организации исключаются.
+
+`organization_id` проходит `OneHotEncoder(handle_unknown="ignore")`; все числовые признаки — `StandardScaler`. `ColumnTransformer` fit только на train partition.
 
 ## Model and validation
 
-The current production artifact is Ridge Regression with destination-organization one-hot encoding plus weekday, lag-1, lag-7 and trailing seven-day mean. Every lag uses only observations strictly before the target day. The final 20% of dates is held out chronologically; random split is prohibited.
+Production pipeline фиксированно обучает `Ridge(alpha=3.0, solver="lsqr")`. Последние 20% уникальных календарных дат — chronological holdout; random split и TimeSeriesSplit не используются. Persistence baseline предсказывает `lag_1` на тех же validation rows.
 
-The persisted metadata contains model id/version, algorithm, target, features, train/validation periods, trained time, MAE, RMSE, WAPE, persistence baseline MAE, dataset fingerprint and residual spread. Metrics shown by the UI come only from the persisted validation metadata. MAPE is not a primary metric because targets often approach zero.
+Метрики: MAE, RMSE, WAPE и baseline MAE. Model metadata также содержит train/validation periods, row counts, residual standard deviation, source fingerprint и feature schema. Текущие значения смотрите через UI, `/api/v1/model/info` или versioned metadata. Код не выполняет автоматический перебор tree/boosting candidates.
 
-Ridge remains selected because it is interpretable and currently improves held-out MAE over lag-1 persistence. A tree model is not labelled production without a reproducible chronological comparison and a semantically valid treatment of the high-cardinality organization feature.
+## Selection and publication
 
-## Explainability
+Ridge — единственная production candidate в текущем коде; metadata сохраняет её метрики и baseline для сравнения. Artifact сначала пишется во временную version directory, затем проверяется на bundle schema/fingerprint/SHA-256 и только после этого атомарно публикуется. Failed training не меняет current pointer.
 
-For one forecast, each local contribution is calculated as the transformed feature value multiplied by its fitted Ridge coefficient. The intercept is shown as the baseline and signed contributions reconcile to the raw linear prediction before non-negative clipping. One-hot organization features are grouped under the human label “historical organization profile”; raw transformed names are not displayed.
+```bash
+python -m app.cli ingest
+python -m app.cli train
+python -m app.cli status
+```
 
-Global values are coefficient magnitudes and depend on feature scale. Local and global explanations describe statistical associations, not causality. Approximate forecast intervals use chronological holdout residual dispersion and are not guaranteed coverage intervals.
+## Inference and explainability
+
+Multi-step forecast рекурсивно использует предыдущие predictions только для будущих шагов и clips отрицательный output к нулю. Interval приблизительно основан на chronological holdout residual dispersion.
+
+Local contribution = transformed feature value × Ridge coefficient; intercept показывается как baseline. Global importance — абсолютный коэффициент в transformed space. Значения описывают ассоциацию и не доказывают причинность.
 
 ## Risk
 
-Prediction and risk are separate. `config/risk_thresholds.yaml` controls points for forecast-to-history ratio, recent trend, latest anomaly z-score, current queue snapshot and forecast error. The result contains a 0–100 score, `normal/attention/high/critical` level, reasons, checks and model version. No organization identifier appears in a rule.
-
-## Lifecycle
-
-`data/raw → validation → persisted aggregates → explicit train → joblib artifact + JSON metadata → lazy runtime load → API → frontend`.
-
-Run explicit training after authorized source changes:
-
-```bash
-PYTHONPATH=apps/api .venv/bin/python scripts/train_model.py
-```
-
-Only trusted locally produced joblib files may be loaded.
+Risk не является output Ridge. `app.core.risk.assess_risk` отдельно оценивает forecast/history ratio, recent trend, anomaly z-score, current snapshot queue и uncertainty по [risk_thresholds.yaml](../config/risk_thresholds.yaml). Пороги и баллы описаны в основном README.

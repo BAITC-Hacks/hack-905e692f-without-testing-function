@@ -1,9 +1,13 @@
 # Demo scenario (3–4 minutes)
 
-1. Open the dashboard and point out the persistent synthetic-data banner.
-2. Select a high-risk synthetic organization and show its latest waiting count.
-3. Explain the seven-day persistence forecast and uncertainty interval.
-4. Open the anomaly card: observed value, trailing reference, z-score and analytical explanation.
-5. Show feature contributors and state that they are not causal conclusions.
-6. Call `/api/v1/metrics`: no real metrics are shown until real data are validated.
-7. Show `ARCHITECTURE.md`, the profiling command and human-in-the-loop guardrail.
+1. Войдите с настроенным admin или явно обозначенной DEMO ЭЦП session.
+2. Покажите health strip и Data Sources: это batch snapshot, не real-time integration.
+3. Разведите текущую очередь и forecast новых регистраций/день.
+4. Выберите регион и организацию; покажите прогноз, interval, chronological validation metrics и persistence baseline.
+5. Покажите local Ridge contributions и проговорите «association, not causation».
+6. Объясните отдельный rule-based risk score и thresholds.
+7. Создайте только draft DecisionAction; покажите human approval/status и audit trail.
+8. Сформируйте report snapshot/export и уточните, что checksum/ЭЦП — demo verification, не НУЦ РК.
+9. Переключите Light/Dark/System и верните System.
+
+Не называйте target прогнозом полного размера очереди и не утверждайте наличие интеграций, которых нет.

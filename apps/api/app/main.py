@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
+import logging
 import math
 import os
+import sqlite3
 import statistics
+import time
+import uuid
 from collections import Counter, defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
 from threading import Lock
@@ -11,15 +17,19 @@ from threading import Lock
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core import auth, storage
 from app.core.analytics import rolling_anomalies
+from app.core.data_pipeline import CURRENT as MART_POINTER
 from app.core.provenance import data_health
 from app.core.provenance import data_sources as provenance_sources
 from app.core.real_data import (
+    MODEL_CURRENT,
     TARGET_NAME,
     DataUnavailable,
     ModelNotReady,
+    inference_feature,
     load_runtime,
     local_contributors,
 )
@@ -35,21 +45,77 @@ from app.core.schemas import (
     ReportCreate,
 )
 
-app = FastAPI(title="MedFlow AI", version="1.0.0", description="GovTech hospital-flow decision support")
-cors_origins = [value.strip() for value in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if value.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_methods=["GET", "POST", "PATCH"], allow_headers=["*"])
+PRODUCTION = os.getenv("APP_ENV", "development").lower() == "production"
+LOGGER = logging.getLogger("medflow.api")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    payload: dict[str, object] = {"event": "startup", "database": "unavailable", "processed_data": "unavailable", "model": "not_ready"}
+    try:
+        with storage.connect() as connection:
+            connection.execute("SELECT 1")
+        payload["database"] = "available"
+    except (sqlite3.Error, OSError):
+        pass
+    try:
+        state = dataset()
+        metadata = state["metadata"]
+        payload.update({"processed_data": metadata.get("dataset_version"), "model": metadata.get("model_version"), "last_ingestion": metadata.get("created_at")})
+    except (DataUnavailable, ModelNotReady):
+        pass
+    LOGGER.info(json.dumps(payload, ensure_ascii=False))
+    yield
+
+
+app = FastAPI(
+    title="MedFlow AI", version="1.0.0", description="GovTech hospital-flow decision support",
+    docs_url=None if PRODUCTION else "/docs", redoc_url=None if PRODUCTION else "/redoc", lifespan=lifespan,
+)
+cors_default = "" if PRODUCTION else "http://localhost:3000,http://127.0.0.1:3000"
+cors_origins = [value.strip() for value in os.getenv("CORS_ORIGINS", cors_default).split(",") if value.strip()]
+if PRODUCTION and not cors_origins:
+    raise RuntimeError("CORS_ORIGINS must be configured in production")
+app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_methods=["GET", "POST", "PATCH"], allow_headers=["Authorization", "Content-Type", "X-Request-ID"], allow_credentials=False, max_age=600)
+trusted_hosts = [value.strip() for value in os.getenv("TRUSTED_HOSTS", "localhost,127.0.0.1,testserver").split(",") if value.strip()]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
 PUBLIC = {"/api/v1/health", "/api/v1/auth/login", "/api/v1/auth/ecp-demo"}
 
 
 @app.middleware("http")
 async def authenticate(request: Request, call_next):
-    public_verification = request.url.path.startswith("/api/v1/reports/verify/")
-    if request.url.path.startswith("/api/v1/") and request.url.path not in PUBLIC and not public_verification and request.method != "OPTIONS":
+    started = time.perf_counter()
+    request_id = request.headers.get("x-request-id", "")
+    if not request_id or len(request_id) > 64:
+        request_id = uuid.uuid4().hex
+    content_length = request.headers.get("content-length", "0")
+    try:
+        oversized = int(content_length) > int(os.getenv("MAX_REQUEST_BYTES", "1048576"))
+    except ValueError:
+        oversized = True
+    if oversized:
+        return JSONResponse({"error": {"code": "REQUEST_TOO_LARGE", "message": "Request body too large", "retryable": False}}, status_code=413)
+    if request.url.path.startswith("/api/v1/") and request.url.path not in PUBLIC and request.method != "OPTIONS":
         try:
             auth.session(request.headers.get("authorization"))
         except HTTPException as error:
             return JSONResponse({"error": {"code": "AUTH_REQUIRED", "message": str(error.detail), "retryable": False}}, status_code=error.status_code)
-    return await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        LOGGER.exception(json.dumps({"event": "request_failed", "request_id": request_id, "endpoint": request.url.path}))
+        raise
+    latency_ms = round((time.perf_counter() - started) * 1000, 2)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if PRODUCTION:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    model_version = _load_dataset().get("metadata", {}).get("model_version") if _load_dataset.cache_info().currsize else None
+    LOGGER.info(json.dumps({"event": "http_request", "request_id": request_id, "status_code": response.status_code, "latency_ms": latency_ms, "endpoint": request.url.path, "model_version": model_version}, ensure_ascii=False))
+    return response
 
 
 @app.exception_handler(DataUnavailable)
@@ -68,10 +134,24 @@ def _load_dataset() -> dict[str, object]:
 
 
 _DATA_LOCK = Lock()
+_CACHE_TOKEN: tuple[int, int] | None = None
+
+
+def _publication_token() -> tuple[int, int]:
+    return tuple(path.stat().st_mtime_ns if path.exists() else 0 for path in (MART_POINTER, MODEL_CURRENT))  # type: ignore[return-value]
 
 
 def dataset() -> dict[str, object]:
+    global _CACHE_TOKEN
     with _DATA_LOCK:
+        token = _publication_token()
+        if _CACHE_TOKEN != token:
+            _load_dataset.cache_clear()
+            for name in ("_grouped", "_batch_next_day_forecasts", "_organization_summaries"):
+                cached = globals().get(name)
+                if cached is not None:
+                    cached.cache_clear()
+            _CACHE_TOKEN = token
         return _load_dataset()
 
 
@@ -97,6 +177,10 @@ def _user(authorization: str | None) -> str:
     return auth.session(authorization)["email"]
 
 
+def _authorized(authorization: str | None, *roles: str) -> dict:
+    return auth.require_role(authorization, set(roles))
+
+
 def _human_feature(name: str) -> str:
     normalized = name.replace("numeric__", "")
     if normalized.startswith(("organization__", "organization=")):
@@ -118,7 +202,7 @@ def _forecast_payload(org_id: str, horizon_days: int = 7) -> dict[str, object]:
     points, explanation = [], []
     for step in range(1, horizon_days + 1):
         next_day = current + timedelta(days=step)
-        feature = [org_id, next_day.weekday(), values[-1], values[-7], sum(values[-7:]) / 7]
+        feature = inference_feature(org_id, next_day, values)
         value = max(0.0, float(bundle["pipeline"].predict([feature])[0]))
         if not explanation:
             explanation = local_contributors(bundle, feature)
@@ -158,7 +242,7 @@ def _batch_next_day_forecasts() -> dict[str, float]:
             continue
         next_day = rows[-1].day + timedelta(days=1)
         ids.append(org_id)
-        features.append([org_id, next_day.weekday(), values[-1], values[-7], sum(values[-7:]) / 7])
+        features.append(inference_feature(org_id, next_day, values))
     predictions = dataset()["bundle"]["pipeline"].predict(features)
     return {org_id: round(max(0.0, float(value)), 2) for org_id, value in zip(ids, predictions, strict=True)}
 
@@ -193,19 +277,27 @@ def paginate(items, page: int, page_size: int):
 
 @app.get("/api/v1/health")
 def health():
-    components = {"api": {"status": "online"}, "database": {"status": "available"}}
+    components = {"api": {"status": "online"}}
+    try:
+        with storage.connect() as connection:
+            connection.execute("SELECT 1").fetchone()
+        components["database"] = {"status": "available"}
+    except (sqlite3.Error, OSError):
+        components["database"] = {"status": "unavailable"}
     try:
         state = dataset()
-        components["dataset"] = {"status": "available", "detail": state["metadata"]["source_file"]}
-        components["model"] = {"status": "ready", "detail": state["metadata"]["model_version"]}
-        status = "ok"
-    except ModelNotReady as error:
-        components.update({"dataset": {"status": "available"}, "model": {"status": "not_ready", "detail": str(error)}})
+        metadata = state["metadata"]
+        components["processed_data"] = {"status": "available", "version": metadata.get("dataset_version")}
+        components["model"] = {"status": "ready", "version": metadata.get("model_version")}
+        components["last_ingestion"] = {"status": "available", "at": metadata.get("created_at")}
+        status = "ok" if components["database"]["status"] == "available" else "degraded"
+    except ModelNotReady:
+        components.update({"processed_data": {"status": "available"}, "model": {"status": "not_ready", "reason": "no_valid_artifact"}})
         status = "degraded"
-    except DataUnavailable as error:
-        components.update({"dataset": {"status": "unavailable", "detail": str(error)}, "model": {"status": "not_ready"}})
+    except DataUnavailable:
+        components.update({"processed_data": {"status": "unavailable", "reason": "no_valid_mart"}, "model": {"status": "not_ready"}})
         status = "degraded"
-    return {"status": status, "components": components, "checked_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+    return {"status": status, "components": components, "model_version": components.get("model", {}).get("version"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds")}
 
 
 @app.get("/api/v1/regions")
@@ -267,7 +359,8 @@ def explain(org_id: str):
 
 @app.get("/api/v1/model/info")
 @app.get("/api/v1/metrics", deprecated=True)
-def model_info():
+def model_info(authorization: str | None = Header(None)):
+    _authorized(authorization, "analyst", "admin")
     metadata = {k: v for k, v in dataset()["metadata"].items() if k not in {"region_counts", "organization_counts"}}
     grouped_importance: dict[str, float] = {}
     for item in metadata.get("global_importance", []):
@@ -308,12 +401,14 @@ def actions(status: str | None = None): return {"items": storage.list_actions(st
 
 @app.post("/api/v1/actions", status_code=201)
 def action_create(payload: DecisionActionCreate, authorization: str | None = Header(None)):
+    _authorized(authorization, "analyst", "admin")
     known(payload.organization_id)
     return storage.create_action(payload.model_dump(), _user(authorization))
 
 
 @app.patch("/api/v1/actions/{action_id}")
 def action_update(action_id: str, payload: DecisionActionStatus, authorization: str | None = Header(None)):
+    _authorized(authorization, "admin")
     item = storage.update_action(action_id, payload.status, _user(authorization))
     if not item: raise HTTPException(404, "Решение не найдено")
     return item
@@ -326,6 +421,7 @@ def _report_rows(payload: ReportCreate) -> list[dict]:
 
 @app.post("/api/v1/reports", status_code=201)
 def report_create(payload: ReportCreate, authorization: str | None = Header(None)):
+    _authorized(authorization, "analyst", "admin")
     rows, metadata = _report_rows(payload), dataset()["metadata"]
     snapshot = {"waiting": sum(x["current_queue"] for x in rows), "high_risk": sum(x["risk_level"] in {"high", "critical"} for x in rows), "anomalies": summary()["anomalies"], "organizations": rows[:100], "model_version": metadata["model_version"], "data_freshness": metadata["date_range"][1], "actions_summary": f"Записей в журнале решений: {len(storage.list_actions())}"}
     return storage.create_report(checksum(snapshot), payload.model_dump(), snapshot, _user(authorization))
@@ -341,6 +437,7 @@ def report_verify(report_id: str, checksum_value: str | None = Query(None, alias
 
 @app.get("/api/v1/reports/{report_id}/export/{format}")
 def report_export(report_id: str, format: str, authorization: str | None = Header(None)):
+    _authorized(authorization, "analyst", "admin")
     report = storage.get_report(report_id)
     if not report: raise HTTPException(404, "Отчёт не найден")
     storage.audit(_user(authorization), "export", "ManagementReport", report_id, {"format": format})
@@ -358,12 +455,15 @@ def report_export(report_id: str, format: str, authorization: str | None = Heade
 
 
 @app.get("/api/v1/audit")
-def audit_log(limit: int = Query(100, ge=1, le=500)): return {"items": storage.audit_rows(limit)}
+def audit_log(limit: int = Query(100, ge=1, le=500), authorization: str | None = Header(None)):
+    _authorized(authorization, "admin")
+    return {"items": storage.audit_rows(limit)}
 
 
 @app.post("/api/v1/auth/login")
-def login(payload: dict):
-    result = auth.login_user(payload)
+def login(payload: dict, request: Request = None):
+    client_key = request.client.host if request and request.client else "local"
+    result = auth.login_user(payload, client_key)
     storage.audit(result["email"], "login", "Session", None, {"demo": False})
     return result
 
@@ -380,6 +480,8 @@ def logout(authorization: str | None = Header(None)):
 
 @app.post("/api/v1/auth/ecp-demo")
 def ecp_demo():
-    result = auth.issue("ecp-demo@local", demo=True)
+    if os.getenv("ENABLE_DEMO_AUTH", "false").lower() != "true" and PRODUCTION:
+        raise HTTPException(404, "Not found")
+    result = auth.issue("ecp-demo@local", demo=True, role="analyst")
     storage.audit(result["email"], "login", "Session", None, {"demo": True})
     return {**result, "notice": "ДЕМОНСТРАЦИОННЫЙ ВХОД: без сертификата, подписи и интеграции НУЦ РК"}
